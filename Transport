@@ -1,0 +1,264 @@
+//GENERAL INFO
+/*We use to grids which we refer as source grid and endpoint grid.
+At the source grid we use the helping class 'checkbox' in order to bind all the checkboxes with the functionality needed
+The Binding of the grid is crucial to happen in order
+The first grid that should be binded has to be the endpointGrid in order to get the TransferredIds first in place.
+Then the source grid can be binded and remove from its datasource the transferredIds.
+A way to achieve this is:
+1.The endpoint grid gets binded with the view model. 
+    In this case the only commitment to the source grid is not to be binded with the model.
+2.The endpoint grid reads with autobind(true)
+    In this case the source endpoint should be autobind(false) and read at a time selected by us. (Either cascading or on EndpointDatabound)*/
+
+//VIEW
+/*.We bind the Remove event of the enpoint grid to make the necessairy modifications to the helping arrays
+.Events(ev => ev.Remove("onRemoveFromEndpoint"))*/
+
+/*.We bind the source grid databound event to be handle the change of pages and the read and 
+display of data not transported to the endpoint
+source grid: .Events(ev => ev.DataBound("onSourceDataBound"))*/
+
+/*.We bind the buttons of the page with the handler functions(DeleteAll, Transfer)
+source grid - transfer button: onclick='transport.moveSelectedToEndpoint()
+endpoint grid - deleteall button: onclick='transport.deleteAllEndpointRows()'*/
+
+//CUSTOM - The only part that should be strictly inside at a single view because it has to do with the grid names
+/*On the databound event of the endpoint grid (We select the name that we want for the event):*/
+/*EXAMPLE :
+function onPGSecRolesEndpointDatabound(e) {
+    //3.Set the Ids already transfered to the helping array
+    transport.setTransferedIds(e.sender.element[0].id);
+    //4.Set the grids that will participate in the exchange
+    transport.setSourceandEnpoint(epgsrsGridName, epgsreGridName);
+    //5.Bind the transport object to the helping class
+    transport.bindTo(".checkbox");
+};*/
+
+
+//*************Common - Grid transporting Functions***********************//
+var fromGridToGridDataTransfer = function (fromGrid, toGrid) {
+    var checkedIds = {},//The selected Ids at any given moment
+    transferedIds = {},//The Ids that have been transfered from source to endpoint
+    gridSource,//The gridSource name
+    gridEndpoint,//The gridEndpoint name
+    dBtype;//The dataBound type used to separate the change page from the databound event
+
+    return {
+        getTransferedIds: function () { return transferedIds; },
+        getCheckedIds: function () { return checkedIds; },
+        getSource: function () { return gridSource; },
+        getEndpoint: function () { return gridEndpoint; },
+        getDbType: function () { return dBtype; },
+        setDbType: function (value) {
+            dBtype = value;
+        },
+        //Populates the helping array with the enpoint ids
+        setTransferedIds: function (endpoint) {
+            var toDS = $("#" + endpoint).data("kendoGrid").dataSource;
+            $.each(toDS._data, function (idx, elem) {
+                transferedIds[elem.Id] = true;
+            });
+        },
+        //Sets the grids that will be used in the view fro the transfers
+        setSourceandEnpoint: function (sourceName, endpointName) {
+            gridSource = $("#" + sourceName).data("kendoGrid");
+            gridEndpoint = $("#" + endpointName).data("kendoGrid");
+        },
+        //Remove from the Helping databound array every deleted item
+        deleteEndpointRow: function (id) { delete transferedIds[id]; },
+
+        //Remove from the endpoint all the rows
+        deleteAllEndpointRows: function () {
+            emptyDatasource = newKendoDS([]);
+            gridEndpoint.dataSource.data(emptyDatasource._data);
+            this.emptyHelpingArrays();
+        },
+
+        //Bind the click event with function that handles the helping arrays
+        bindTo: function (className) {
+            gridSource.table.on("click", className, selectRow);
+        },
+
+        //Empty all helping arrays(Close of modal, Delete of all Endpoint rows)
+        emptyHelpingArrays: function () {
+            transferedIds = {};
+            checkedIds = {};
+        },
+
+        //The Transfer functionality
+        moveSelectedToEndpoint: function () {
+            var finalObjs = [],
+                fromDS = gridSource.dataSource,
+                toDS = gridEndpoint.dataSource;
+
+            $.each(fromDS._data, function (idx1, elem1) {
+                $.each(checkedIds, function (idx2, elem2) {
+                    if (elem1.Id == idx2 && elem2 == true) {
+                        //Insert the elements that are inside the array and are checked into another helping array
+                        finalObjs.push(elem1);
+                        return false;
+                    }
+                });
+            });
+
+            if (finalObjs.length > 0) {
+                var DSadded = newKendoDS(finalObjs),
+                //Merge the associated arrays and set the new datasource to the Endpoing Grid
+                DSFinal = $.merge(toDS._data, DSadded._data),
+                newDatasource = newKendoDS(DSFinal);
+
+                toDS.data(newDatasource._data);
+
+                var emptyDatasource = newKendoDS([]);
+                //If we have transfered all don't loop the array, just transfer the entire datasource to the enpoint
+                if (finalObjs.length == fromDS._data.length) {
+                    fromDS.data(emptyDatasource._data);
+                } else {
+                    //If not all objects are transferred loop the source datasource and delete the transferred items
+                    var fromDSArrayfinal = [];
+                    $.each(fromDS._data, function (idx, el) {
+                        if (finalObjs.indexOf(el) == -1) {
+                            fromDSArrayfinal.push(el);
+                        }
+                    });
+                    var fromDSdatasourcefinal = newKendoDS(fromDSArrayfinal);
+                    fromDS.data(emptyDatasource._data);
+                    fromDS.data(fromDSdatasourcefinal._data);
+                }
+
+                //Uncheck the checkAll box after the transport
+                $(".masterCheckBox").removeAttr('checked');
+                fromDS.page(1);
+            }
+        },
+
+        //When a row Checkbox is selected add selected class and add the item the checkedIds array
+        selectRow: function (el) {
+            var checked = el.checked,
+                row = $(el).closest("tr"),
+                dataItem = gridSource.dataItem(row);
+
+            checkedIds[dataItem.Id] = checked;
+            if (checked) {
+                row.addClass("k-state-selected");//-select the row
+            } else {
+                row.removeClass("k-state-selected");//-remove selection
+            }
+        },
+        //Function Handler for the selectAllFromGrid event. 
+        selectAllFromGrid: function (elem, gridName) {
+            var state = $(elem).is(':checked');
+            var grid = $("#" + gridName.id).data("kendoGrid");
+            var data;
+            //This case is used when the source data are in filtering mode
+            if (grid.dataSource.total() != grid.dataSource.data().length) {
+                //That means that a filter is enabled
+                //http://www.telerik.com/forums/get-filtered-data-from-paged-grid
+                var dataSource = grid.dataSource;
+                var filters = dataSource.filter();
+                var allData = dataSource.data();
+                var query = new kendo.data.Query(allData);
+                data = query.filter(filters).data;
+            }
+            else {
+                data = grid.dataSource.data()
+            }
+            for (var i = 0; i < grid.dataSource.total() ; i++) {
+                var dataRow = data[i];
+                if (state && !checkedIds[dataRow.Id]) {
+                    checkedIds[dataRow.Id] = state;
+                } else if (!state && checkedIds[dataRow.Id]) {
+                    delete checkedIds[dataRow.Id];
+                }
+
+                var elementRow = grid.table.find(".checkbox")[i];
+                if (elementRow != null) {
+                    var checked = elementRow.checked,
+                        row = $(elementRow).closest("tr"),
+                        dataItem = grid.dataItem(grid.tbody.find("tr").eq(i));
+
+                    if (state) {
+                        //-select the row
+                        elementRow.checked = true;
+                        row.addClass("k-state-selected")
+                            .find(".checkbox")
+                            .attr("checked", "checked");
+                    } else {
+                        //-remove selection
+                        elementRow.checked = false;
+                        row.removeClass("k-state-selected");
+                    }
+                }
+            };
+        },
+    }
+}
+
+//The function handling the source grid functionality
+function onSourceDataBound(e) {
+    var grid = $("#" + e.sender.element[0].id).data("kendoGrid");
+    //when the event is triggered we should remove all transerred elements
+    if (Object.keys(transport.getTransferedIds()).length > 0) {
+        //When the event doesn't have to do with changing page
+        if (transport.getDbType() == "read") {
+            var fromDSArrayfinal = [];
+            var stop = 0;
+            for (var i = 0; i < grid.dataSource._data.length; i++) {
+                if (Object.keys(transport.getTransferedIds()).length == stop) {
+                    fromDSArrayfinal.push.apply(fromDSArrayfinal, grid.dataSource._data.slice(i, grid.dataSource._data.length))
+                    break;
+                }
+                else if (Object.keys(transport.getTransferedIds()).indexOf(grid.dataSource._data[i].Id) == -1) {
+                    fromDSArrayfinal.push(grid.dataSource._data[i]);
+                }
+                else {
+                    stop++;
+                }
+            }
+            var fromDSdatasourcefinal = newKendoDS(fromDSArrayfinal);
+            transport.setDbType("clear");
+            grid.dataSource.data(fromDSdatasourcefinal._data);
+        }
+    }//Here we add classes to the selected items in order to show them as selected on change Page event
+    if (Object.keys(transport.getCheckedIds()).length > 0) {
+        var view = this.dataSource.view();
+        for (var i = 0; i < view.length; i++) {
+            if (transport.getCheckedIds()[view[i].Id]) {
+                this.tbody.find("tr[data-uid='" + view[i].uid + "']")
+                .addClass("k-state-selected")
+                .find(".checkbox")
+                .attr("checked", "checked");
+            }
+        }
+    }
+};
+//On Delete row from the Enpoint grid
+function onRemoveFromEndpoint(e) {
+    transport.deleteEndpointRow(e.model.Id);
+}
+
+//On Request end of the source in order to handle the functioning in the Databound Event
+function onSourceRequestEnd(e) {
+    if (e.sender._page == 1) {
+        transport.setDbType(e.type);
+    }
+}
+
+//Handles the selected visualization class and the checkedIds array
+function selectRow(e) {
+    transport.selectRow(this);
+}
+//Helping function to create new Kendo dataSources. Used a lot in the transport object
+function newKendoDS(ndata) {
+    var datasource = new kendo.data.DataSource({ data: ndata });
+    datasource.read();
+    return datasource;
+}
+//START
+/*.Set the transport variable as global in order to start the functionality*/
+var transport = fromGridToGridDataTransfer();
+//================================================Grid transporting Functions
+
+
+
+
